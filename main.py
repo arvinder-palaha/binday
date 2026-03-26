@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
+import json
+import os
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -26,6 +30,47 @@ def fetch_ics(url: str = ICS_URL, timeout: int = 30) -> bytes:
     req = Request(url, headers={"User-Agent": "binday/0.1 (personal use)"})
     with urlopen(req, timeout=timeout) as resp:
         return resp.read()
+
+
+def _read_cache(path: Path, *, max_age: timedelta) -> bytes | None:
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return None
+
+    age = datetime.now(tz=LONDON) - datetime.fromtimestamp(st.st_mtime, tz=LONDON)
+    if age > max_age:
+        return None
+    return path.read_bytes()
+
+
+def fetch_ics_cached(
+    *,
+    url: str = ICS_URL,
+    cache_path: Path,
+    max_age: timedelta = timedelta(days=7),
+    timeout: int = 30,
+) -> bytes:
+    cached = _read_cache(cache_path, max_age=max_age)
+    if cached is not None:
+        return cached
+
+    data = fetch_ics(url=url, timeout=timeout)
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_bytes(data)
+    except OSError:
+        # Home Assistant uses /config, but if we're not running inside HA that path may
+        # not exist or be writable. Fall back to a user-writable location.
+        fallback = Path(os.path.expanduser("~/.cache/binday/vale-v1-tuesday.ics"))
+        try:
+            fallback.parent.mkdir(parents=True, exist_ok=True)
+            fallback.write_bytes(data)
+            cache_path = fallback
+        except OSError:
+            # If we can't write anywhere, still return fresh data (no cache).
+            pass
+    return data
 
 
 def _occurrence_date(event) -> date:
@@ -70,17 +115,56 @@ def next_collection(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Show next Vale V1 Tuesday collection.")
+    parser.add_argument(
+        "--cache-path",
+        default=str(Path(".cache") / "vale-v1-tuesday.ics"),
+        help="Where to store the downloaded .ics file.",
+    )
+    parser.add_argument(
+        "--max-age-days",
+        type=int,
+        default=7,
+        help="Re-download calendar if cache older than this many days.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format (use json for Home Assistant).",
+    )
+    args = parser.parse_args()
+
     try:
-        data = fetch_ics()
+        data = fetch_ics_cached(
+            cache_path=Path(args.cache_path),
+            max_age=timedelta(days=args.max_age_days),
+        )
     except URLError as e:
         print(f"Could not download calendar: {e}")
         raise SystemExit(1) from e
     nxt = next_collection(data)
     if nxt is None:
-        print("No upcoming collection found in calendar.")
+        if args.format == "json":
+            print(json.dumps({"ok": False, "error": "No upcoming collection found"}))
+        else:
+            print("No upcoming collection found in calendar.")
         return
     d, summary = nxt
-    print(f"Next collection: {d.isoformat()} — {summary}")
+    if args.format == "json":
+        today = date.today()
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "date": d.isoformat(),
+                    "summary": summary,
+                    "days_until": (d - today).days,
+                }
+            )
+        )
+    else:
+        print(f"Next collection: {d.isoformat()} — {summary}")
 
 
 if __name__ == "__main__":
