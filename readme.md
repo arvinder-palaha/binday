@@ -10,3 +10,7 @@ I want to automatically fetch the next schedule bin collection for my address.
 2. Select address
 3. Next collection date and rubbish type displayed
 
+## bin schedule calendar
+
+[Add waste calendar to google calendar or iCal](https://www.whitehorsedc.gov.uk/vale-of-white-horse-district-council/recycling-rubbish-and-waste/when-is-your-collection-day/waste-collections-calendar/add-your-waste-calendar-to-google-calendar-or-ical/)
+
