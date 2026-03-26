@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
+import recurring_ical_events
 from icalendar import Calendar
 
 # Tuesday, Vale 1 / South 2 (most of the Vale — not Appleford/Blewbury/Chilton/Harwell V2)
@@ -14,6 +16,11 @@ ICS_URL = (
     "t9khic9tvlktqh81g36c4535mo%40group.calendar.google.com/public/basic.ics"
 )
 
+LONDON = ZoneInfo("Europe/London")
+
+# Expand RRULEs at least this far ahead (fortnightly collections need a wide window).
+_LOOKAHEAD_DAYS = 800
+
 
 def fetch_ics(url: str = ICS_URL, timeout: int = 30) -> bytes:
     req = Request(url, headers={"User-Agent": "binday/0.1 (personal use)"})
@@ -21,17 +28,11 @@ def fetch_ics(url: str = ICS_URL, timeout: int = 30) -> bytes:
         return resp.read()
 
 
-def _collection_date(event) -> date | None:
-    """All-day (DATE) events are the published collection schedule; timed entries are reminders."""
-    dt = event.get("dtstart")
-    if dt is None:
-        return None
-    value = dt.dt
-    if isinstance(value, datetime):
-        return None
-    if isinstance(value, date):
-        return value
-    return None
+def _occurrence_date(event) -> date:
+    dt = event["DTSTART"].dt
+    if isinstance(dt, datetime):
+        return dt.date()
+    return dt
 
 
 def next_collection(
@@ -39,15 +40,29 @@ def next_collection(
     *,
     on_or_after: date | None = None,
 ) -> tuple[date, str] | None:
+    """
+    Next bin collection on or after `on_or_after`.
+
+    The council ICS mixes explicit dates with long-running RRULE (fortnightly Tuesday)
+    series. Listing only raw VEVENT rows misses RRULE-generated dates unless we expand.
+    """
     on_or_after = on_or_after or date.today()
     cal = Calendar.from_ical(ics_bytes)
+    start = datetime.combine(on_or_after, time.min, tzinfo=LONDON)
+    end = datetime.combine(
+        on_or_after + timedelta(days=_LOOKAHEAD_DAYS),
+        time.max,
+        tzinfo=LONDON,
+    )
+    occurrences = recurring_ical_events.of(cal).between(start, end)
+
     best: tuple[date, str] | None = None
-    for event in cal.walk("VEVENT"):
-        d = _collection_date(event)
-        if d is None or d < on_or_after:
-            continue
+    for event in occurrences:
         summary = str(event.get("summary") or "").strip()
-        if not summary:
+        if not summary or "reminder" in summary.lower():
+            continue
+        d = _occurrence_date(event)
+        if d < on_or_after:
             continue
         if best is None or d < best[0]:
             best = (d, summary)

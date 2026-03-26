@@ -6,4 +6,5 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "icalendar>=6.0.0",
+    "recurring-ical-events>=3.8.1",
 ]
