@@ -73,6 +73,22 @@ def fetch_ics_cached(
     return data
 
 
+def _format_long_date(d: date) -> str:
+    """e.g. Tuesday 24th March."""
+    day = d.day
+    if 10 <= day % 100 <= 20:
+        suffix = "th"
+    elif day % 10 == 1:
+        suffix = "st"
+    elif day % 10 == 2:
+        suffix = "nd"
+    elif day % 10 == 3:
+        suffix = "rd"
+    else:
+        suffix = "th"
+    return f"{d:%A} {day}{suffix} {d:%B}"
+
+
 def _occurrence_date(event) -> date:
     dt = event["DTSTART"].dt
     if isinstance(dt, datetime):
@@ -158,13 +174,14 @@ def main() -> None:
                 {
                     "ok": True,
                     "date": d.isoformat(),
+                    "longdate": _format_long_date(d),
                     "summary": summary,
                     "days_until": (d - today).days,
                 }
             )
         )
     else:
-        print(f"Next collection: {d.isoformat()} — {summary}")
+        print(f"Next collection: {_format_long_date(d)} — {summary}")
 
 
 if __name__ == "__main__":
