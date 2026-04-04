@@ -1,7 +1,7 @@
 [project]
 name = "binday"
 version = "0.1.0"
-description = "Add your description here"
+description = "Next waste collection from a public ICS URL (Home Assistant friendly JSON)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

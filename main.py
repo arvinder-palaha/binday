@@ -1,10 +1,11 @@
-"""Vale of White Horse V1 Tuesday waste calendar — next collection from public ICS."""
+"""Next waste collection from a public ICS calendar (council iCal / Google public feed)."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import sys
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from urllib.error import URLError
@@ -14,20 +15,26 @@ from zoneinfo import ZoneInfo
 import recurring_ical_events
 from icalendar import Calendar
 
-# Tuesday, Vale 1 / South 2 (most of the Vale — not Appleford/Blewbury/Chilton/Harwell V2)
-ICS_URL = (
-    "https://calendar.google.com/calendar/ical/"
-    "t9khic9tvlktqh81g36c4535mo%40group.calendar.google.com/public/basic.ics"
-)
-
-LONDON = ZoneInfo("Europe/London")
+_ENV_ICS_URL = "BINDAY_ICS_URL"
 
 # Expand RRULEs at least this far ahead (fortnightly collections need a wide window).
 _LOOKAHEAD_DAYS = 800
 
+LONDON = ZoneInfo("Europe/London")
 
-def fetch_ics(url: str = ICS_URL, timeout: int = 30) -> bytes:
-    req = Request(url, headers={"User-Agent": "binday/0.1 (personal use)"})
+
+def _resolve_ics_url(cli_url: str | None) -> str | None:
+    if cli_url and cli_url.strip():
+        return cli_url.strip()
+    env = os.environ.get(_ENV_ICS_URL, "").strip()
+    return env or None
+
+
+def fetch_ics(url: str, timeout: int = 30) -> bytes:
+    req = Request(
+        url,
+        headers={"User-Agent": "binday/0.1 (public ICS waste calendar fetcher)"},
+    )
     with urlopen(req, timeout=timeout) as resp:
         return resp.read()
 
@@ -46,7 +53,7 @@ def _read_cache(path: Path, *, max_age: timedelta) -> bytes | None:
 
 def fetch_ics_cached(
     *,
-    url: str = ICS_URL,
+    url: str,
     cache_path: Path,
     max_age: timedelta = timedelta(days=7),
     timeout: int = 30,
@@ -62,11 +69,10 @@ def fetch_ics_cached(
     except OSError:
         # Home Assistant uses /config, but if we're not running inside HA that path may
         # not exist or be writable. Fall back to a user-writable location.
-        fallback = Path(os.path.expanduser("~/.cache/binday/vale-v1-tuesday.ics"))
+        fallback = Path(os.path.expanduser("~/.cache/binday/calendar.ics"))
         try:
             fallback.parent.mkdir(parents=True, exist_ok=True)
             fallback.write_bytes(data)
-            cache_path = fallback
         except OSError:
             # If we can't write anywhere, still return fresh data (no cache).
             pass
@@ -102,10 +108,10 @@ def next_collection(
     on_or_after: date | None = None,
 ) -> tuple[date, str] | None:
     """
-    Next bin collection on or after `on_or_after`.
+    Next collection event on or after `on_or_after`.
 
-    The council ICS mixes explicit dates with long-running RRULE (fortnightly Tuesday)
-    series. Listing only raw VEVENT rows misses RRULE-generated dates unless we expand.
+    Many council feeds mix explicit dates with long-running RRULE series; listing only
+    raw VEVENT rows misses RRULE-generated dates unless we expand.
     """
     on_or_after = on_or_after or date.today()
     cal = Calendar.from_ical(ics_bytes)
@@ -131,10 +137,17 @@ def next_collection(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Show next Vale V1 Tuesday collection.")
+    parser = argparse.ArgumentParser(
+        description="Show the next waste collection from a public ICS URL.",
+    )
+    parser.add_argument(
+        "--ics-url",
+        default=None,
+        help=f"Calendar feed URL (overrides {_ENV_ICS_URL}).",
+    )
     parser.add_argument(
         "--cache-path",
-        default=str(Path(".cache") / "vale-v1-tuesday.ics"),
+        default=str(Path(".cache") / "calendar.ics"),
         help="Where to store the downloaded .ics file.",
     )
     parser.add_argument(
@@ -151,13 +164,22 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    ics_url = _resolve_ics_url(args.ics_url)
+    if not ics_url:
+        print(
+            f"binday: set {_ENV_ICS_URL} or pass --ics-url with your public waste calendar URL.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     try:
         data = fetch_ics_cached(
+            url=ics_url,
             cache_path=Path(args.cache_path),
             max_age=timedelta(days=args.max_age_days),
         )
     except URLError as e:
-        print(f"Could not download calendar: {e}")
+        print(f"Could not download calendar: {e}", file=sys.stderr)
         raise SystemExit(1) from e
     nxt = next_collection(data)
     if nxt is None:
