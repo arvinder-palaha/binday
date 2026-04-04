@@ -44,7 +44,17 @@ uv run python main.py --ics-url 'https://example.com/other.ics'
 
 ### Home Assistant OS / container
 
-Install dependencies and copy `main.py` under `/config/binday/` (or your layout). Example with env inline (replace the URL; for secrets, use a shell wrapper or `!secret` expanded by your own include):
+Copy `main.py` under `/config/binday/` (or your layout).
+
+**Python packages:** The interpreter you run in the `command_line` sensor must have **`icalendar`** and **`recurring-ical-events`** installed — the same ones as in `pyproject.toml`. Use the **same** `python` (or `python3`) binary as in your sensor `command`:
+
+```bash
+python3 -m pip install 'icalendar>=6' 'recurring-ical-events>=3.8'
+```
+
+How you run that depends on your setup (HA OS, Container, supervised). Common patterns: **SSH & Web Terminal** add-on into the environment that sees `/config`, a small **venv** under `/config/binday/.venv` with `command` pointing to `/config/binday/.venv/bin/python`, or another host path you control. If imports fail, the command prints a traceback instead of JSON and the sensor may stay **unknown**.
+
+Example run (replace the URL; for secrets, use a shell wrapper or `!secret` expanded by your own include):
 
 ```bash
 BINDAY_ICS_URL='https://example.com/your-public-calendar.ics' \
@@ -64,7 +74,12 @@ command_line:
         --format json
         --cache-path /config/binday/calendar.ics
         --max-age-days 7
-      value_template: "{{ value_json.summary }}"
+      value_template: >-
+        {% if value_json.ok is defined and value_json.ok %}
+          {{ value_json.summary }}
+        {% else %}
+          {{ value_json.error | default('No collection data') }}
+        {% endif %}
       json_attributes:
         - date
         - longdate
@@ -73,6 +88,8 @@ command_line:
 ```
 
 Point `BINDAY_ICS_URL` at your real feed (e.g. via a wrapper script that reads `secrets.yaml` if you prefer not to inline it).
+
+**`value_template` and JSON errors:** When the script succeeds but finds no event, it prints `{"ok": false, "error": "..."}` — there is no `summary`. The template above shows **`error`** in that case. If the command fails (network, bad URL, missing Python deps), Home Assistant may not get valid JSON at all; the entity can show **unknown** / **unavailable** until the next successful run. A minimal alternative is `{{ value_json.summary | default(value_json.error | default('Unknown'), true) }}` if you prefer a one-line template.
 
 ### Dashboard: Markdown card (`longdate`)
 
