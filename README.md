@@ -117,6 +117,19 @@ content: |
 
 The first line uses **`longdate`** only. The next lines show the main state (**summary** from `value_template`) and **days_until**. If the sensor is unavailable, the template may render empty; you can wrap the block in `{% if states('sensor.next_bin_collection') not in ['unknown', 'unavailable'] %} … {% endif %}` if you want a fallback message.
 
+Example **Markdown** card with a table — **When** as `yyyy-mm-dd` and **Day** as the full weekday (e.g. `TUESDAY`):
+
+```yaml
+type: markdown
+content: |
+  | key | value |
+  |:----|------:|
+  | What | {{ states('sensor.next_bin_collection') }} |
+  | When | {{ state_attr('sensor.next_bin_collection','date') }} |
+  | Day | {{ as_datetime(state_attr('sensor.next_bin_collection', 'date')).strftime('%A').upper() }} |
+  | Days until | {{ state_attr('sensor.next_bin_collection', 'days_until') }} |
+```
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
